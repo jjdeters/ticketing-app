@@ -1,6 +1,7 @@
 import streamlit as st
 import json
 import os
+import pandas as pd
 from datetime import datetime
 
 DATA_FILE = "tickets.json"
@@ -21,7 +22,6 @@ def save_tickets(tickets):
 tickets = load_tickets()
 next_id = max([t["id"] for t in tickets], default=0) + 1
 
-# App title
 st.title("🎫 Ticketing System")
 
 # Sidebar filters
@@ -37,7 +37,7 @@ with st.form("create_ticket"):
     title = st.text_input("Title")
     category = st.text_input("Category")
     due_date = st.date_input("Due Date")
-    description = st.text_area("Description")  # New field
+    description = st.text_area("Description")
     submitted = st.form_submit_button("Create Ticket")
     if submitted and title:
         new_ticket = {
@@ -53,29 +53,35 @@ with st.form("create_ticket"):
         st.success("Ticket created!")
         st.experimental_rerun()
 
+# Convert to DataFrame for editing
+df = pd.DataFrame(tickets)
+
 # Apply filters
-filtered = [
-    t for t in tickets
-    if (show_resolved or t["status"] == "open")
-    and (category_filter.lower() in t["category"].lower())
-    and (
-        search_term.lower() in t["title"].lower()
-        or search_term.lower() in t.get("description", "").lower()
-    )
-]
+if not show_resolved:
+    df = df[df["status"] == "open"]
+if category_filter:
+    df = df[df["category"].str.contains(category_filter, case=False, na=False)]
+if search_term:
+    df = df[
+        df["title"].str.contains(search_term, case=False, na=False)
+        | df["description"].str.contains(search_term, case=False, na=False)
+    ]
+if sort_by_due and "due_date" in df.columns:
+    df["due_date"] = pd.to_datetime(df["due_date"], errors="coerce")
+    df = df.sort_values("due_date")
 
-if sort_by_due:
-    filtered.sort(key=lambda x: x["due_date"])
+# Editable table
+st.subheader("✏️ Edit Tickets")
+edited_df = st.data_editor(
+    df,
+    use_container_width=True,
+    num_rows="dynamic",
+    key="editor"
+)
 
-# Display tickets
-st.subheader("📋 Tickets")
-for t in filtered:
-    with st.expander(f'#{t["id"]}: {t["title"]}'):
-        st.write(f'**Category:** {t["category"]}')
-        st.write(f'**Due Date:** {t["due_date"]}')
-        st.write(f'**Status:** {t["status"].capitalize()}')
-        st.write(f'**Description:** {t.get("description", "(no description)")}')
-        if st.button(f'Toggle Status (#{t["id"]})'):
-            t["status"] = "resolved" if t["status"] == "open" else "open"
-            save_tickets(tickets)
-            st.experimental_rerun()
+# Save edits
+if st.button("💾 Save Changes"):
+    updated_tickets = edited_df.to_dict(orient="records")
+    save_tickets(updated_tickets)
+    st.success("Changes saved!")
+    st.experimental_rerun()
